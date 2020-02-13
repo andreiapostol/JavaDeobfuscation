@@ -11,6 +11,15 @@ import re
 
 import pygraphviz as pgv
 
+def is_boolean_verifier(s):
+    return s in ("LESS_THAN", "NOT_EQUAL_TO", "GREATER_THAN", "EQUAL_TO")
+
+def is_some_assignment(s):
+    return s.find("ASSIGNMENT") != -1
+
+def is_postfix(s):
+    return s.find("POSTFIX") != -1
+
 def is_terminal(node):
     return node == None or (node.type in (FeatureNode.TOKEN, FeatureNode.IDENTIFIER_TOKEN, FeatureNode.TYPE))
 
@@ -18,7 +27,7 @@ def is_expression_node(node):
     return node.type == FeatureNode.FAKE_AST and node.contents == "EXPRESSION"
 
 def is_boolean_verifier_token(node):
-    return node.contents in ("LESS_THAN", "NOT_EQUAL_TO", "GREATER_THAN", "EQUAL_TO")
+    return is_boolean_verifier(node.contents)
 
 def is_operation_token(node):
     return node.contents in ("PLUS", "MINUS", "MULTIPLY", "DIVIDE")
@@ -229,12 +238,57 @@ def get_statement_subtrees(g):
     # print(terminal_variables)
     # print(ifs)
 
+def shorten(s):
+    if s == "ASSIGNMENT":
+        return "ASS"
+    if s == "EQUAL":
+        return "EQ"
+    if s == "GREATER":
+        return "GR"
+    if s == "LESS":
+        return "LS"
+    if s == "MULTIPLY":
+        return "MLY"
+    if s == "PLUS":
+        return "PS"
+    if s == "MINUS":
+        return "MNS"
+    if s == "INCREMENT":
+        return "INC"
+    if s == "POSTFIX":
+        return "PFX"
+    if s == "MEMBER":
+        return "MBR"
+    if s == "METHOD":
+        return "MTD"
+    if s == "SELECT":
+        return "SCT"
+    if s == "DIVIDE":
+        return "DVD"
+    if s == "INVOCATION":
+        return "INVC"
+    if s.find("_") == -1:
+        return s
+    parts = s.split("_")
+    if (len(parts) == 1):
+        return s
+    result = ""
+    for part in parts:
+        result += shorten(part)
+        result += "_"
+    return result[:-1]
 
 def get_color(dependency_type):
-    if (dependency_type.find("ASSIGNMENT") != -1):
+    if is_some_assignment(dependency_type):
         return 'green'
-    if (dependency_type in ("LESS_THAN", "NOT_EQUAL_TO", "GREATER_THAN", "EQUAL_TO")):
+    elif is_addition_or_substraction(dependency_type) or is_multiplication_or_division(dependency_type):
+        return 'orange'
+    elif is_boolean_verifier(dependency_type):
         return 'blue'
+    elif is_postfix(dependency_type):
+        return "yellow"
+    elif dependency_type == "MEMBER_SELECT":
+        return "purple"
     return 'red'
 
 def get_visual_graph(dependencies):
@@ -242,7 +296,8 @@ def get_visual_graph(dependencies):
     for (start, end, edge_type, level) in dependencies:
         G.add_edge(start, end, color=get_color(edge_type))
         new_edge = G.get_edge(start, end)
-        # new_edge.attr['label'] = edge_type
+        print(edge_type, shorten(edge_type))
+        new_edge.attr['label'] = shorten(edge_type)
     return G
 
 if __name__ == "__main__":
