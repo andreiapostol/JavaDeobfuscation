@@ -274,7 +274,7 @@ def get_color(dependency_type):
     return 'grey'
 
 def get_visual_graph(dependencies, variable_types):
-    G=pgv.AGraph(directed=True, strict=True, overlap=False, splines='true', nodesep="2", forcelabels="true")
+    G=pgv.AGraph(directed=True, strict=False, overlap=False)
     for variable_name in variable_types.keys():
         G.add_node(variable_name, color='blue')
     for (start, end, edge_type) in dependencies:
