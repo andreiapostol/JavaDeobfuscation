@@ -1,9 +1,10 @@
-import os
 import sys
 
 from graph_pb2 import Graph
 from graph_pb2 import FeatureNode, FeatureEdge
 from method_tokens import tokenize_methods_for_file, get_source_dict_graph, get_id_to_node_graph, tokenize_methods_for_graph
+from ast_traversal_helpers import *
+from get_members_and_types import get_type_mapping
 
 import numpy as np
 import string
@@ -11,50 +12,6 @@ import re
 
 import pygraphviz as pgv
 
-def is_boolean_verifier(s):
-    return s in ("LESS_THAN", "NOT_EQUAL_TO", "GREATER_THAN", "EQUAL_TO")
-
-def is_some_assignment(s):
-    return s.find("ASSIGNMENT") != -1
-
-def is_postfix(s):
-    return s.find("POSTFIX") != -1
-
-def is_terminal(node):
-    return node == None or (node.type in (FeatureNode.TOKEN, FeatureNode.IDENTIFIER_TOKEN, FeatureNode.TYPE))
-
-def is_expression_node(node):
-    return node.type == FeatureNode.FAKE_AST and node.contents == "EXPRESSION"
-
-def is_boolean_verifier_token(node):
-    return is_boolean_verifier(node.contents)
-
-def is_operation_token(node):
-    return node.contents in ("PLUS", "MINUS", "MULTIPLY", "DIVIDE")
-
-def is_member_select_token(node):
-    return node.contents == "MEMBER_SELECT"
-
-def get_subtrees_based_on_function(node, id_mapping, source_mapping, tree_function, visited, max_depth = 100000):
-    sol = []
-    if node.id in visited or max_depth <= 0:
-        return sol
-    visited.add(node.id)
-    if tree_function(node):
-        return [node]
-    if is_terminal(node):
-        return sol
-    edges = source_mapping.get(node.id)
-    if (edges != None and len(edges) > 0):
-        for edge in edges:
-            if (edge.type not in (FeatureEdge.NEXT_TOKEN, FeatureEdge.GUARDED_BY)):
-                sol.extend(get_subtrees_based_on_function(id_mapping.get(edge.destinationId), \
-                    id_mapping, source_mapping, tree_function, visited, max_depth - 1))
-    return sol
-
-# CONDITIONAL_AND
-# MULTIPLY_ASSIGNMENT
-# POSTFIX_DECREMENT
 def get_if_arrays(root, id_mapping, source_mapping):
     return get_subtrees_based_on_function(root, id_mapping, source_mapping, \
         lambda node : node.type == FeatureNode.AST_ELEMENT and node.contents == "IF", set())
@@ -62,10 +19,6 @@ def get_if_arrays(root, id_mapping, source_mapping):
 def get_expression_operation_arrays(root, id_mapping, source_mapping):
     return get_subtrees_based_on_function(root, id_mapping, source_mapping, \
         lambda node : is_expression_node(node) or is_operation_token(node), set())
-
-def get_terminal_variables(node, id_mapping, source_mapping):
-    return get_subtrees_based_on_function(node, id_mapping, source_mapping, \
-        lambda node : is_terminal(node) and node.type == FeatureNode.IDENTIFIER_TOKEN, set())
 
 def get_statement_branches(node, id_mapping, source_mapping):
     return get_subtrees_based_on_function(node, id_mapping, source_mapping, \
@@ -100,12 +53,10 @@ def handle_member_selects(node, id_mapping, source_mapping):
         sol.extend(handle_single_member_select(ms, id_mapping, source_mapping))
     return sol
 
-# def filter_nodes(all_nodes, getter = lamcondition = lambda x : True):
-#      sol = []
-#      for node in all_nodes:
-#          if condition(node):
-#              sol.append(node)
-    
+
+# CONDITIONAL_AND
+# MULTIPLY_ASSIGNMENT
+# POSTFIX_DECREMENT
 
 def get_names(variables, getter = lambda x : x.contents, condition = lambda x : True):
     sol = []
@@ -140,7 +91,7 @@ def commutable_operations(inner, outer):
 def get_assignment_dependencies(statement_type_node, id_mapping, source_mapping, level = 0):
     branches = get_statement_branches(statement_type_node, id_mapping, source_mapping)
     sol = []
-    print(statement_type_node.contents, len(branches))
+    # print(statement_type_node.contents, len(branches))
     if (statement_type_node.contents == "IDENTIFIER"):
         return sol
     # print(statement_type_node.contents)
@@ -149,14 +100,11 @@ def get_assignment_dependencies(statement_type_node, id_mapping, source_mapping,
         right_variables = get_terminal_variables(branches[1], id_mapping, source_mapping)
         lv = get_names(left_variables)
         rv = get_names(right_variables)
-
-        print(lv, rv)
-
+        # print(lv, rv)
         if len(right_variables) == 1:
             for lv in left_variables:
                     sol.append((lv.contents, right_variables[0].contents, statement_type_node.contents, level))
         else:
-           
             inner_dependencies = get_dependencies(branches[1], id_mapping, source_mapping, level + 1)
             # for 
             # sol.extend(inner_dependencies)
@@ -172,11 +120,23 @@ def get_assignment_dependencies(statement_type_node, id_mapping, source_mapping,
         variables = get_terminal_variables(branch, id_mapping, source_mapping)
         if (len(variables) == 1):
             sol.append((variables[0].contents, '1', statement_type_node.contents, level))
-    else:
-        print(branches)
+    # else:
+    #     print(branches)
     return sol
-# COMPUTED_FROM
-# LAST_WRITE
+
+def get_existing_dependencies(root, id_mapping, source_mapping):
+    all_edges_arrays = source_mapping.values()
+    dependencies = []
+    for edge_array in all_edges_arrays:
+        for edge in edge_array:
+            if edge.type in (FeatureEdge.COMPUTED_FROM, FeatureEdge.LAST_WRITE):
+                from_node = id_mapping[edge.sourceId]
+                to_node = id_mapping[edge.destinationId]
+                dependencies.append((from_node.contents, to_node.contents, \
+                "COMPUTED_FROM" if edge.type == FeatureEdge.COMPUTED_FROM \
+                    else "LAST_WRITE", 0))
+    return dependencies
+    
 def get_boolean_verifiers_array(node, id_mapping, source_mapping):
     return get_subtrees_based_on_function(node, id_mapping, source_mapping, \
         is_boolean_verifier_token, set())
@@ -226,21 +186,29 @@ def get_dependencies(root, id_mapping, source_mapping, level = 0):
     sol.extend(handle_member_selects(root, id_mapping, source_mapping))
     return sol
 
-def get_statement_subtrees(g):
-    id_mapping = get_id_to_node_graph(g)
-    source_mapping = get_source_dict_graph(g)
+def remove_level_information(dependencies):
+    result = []
+    for dependency in dependencies:
+        result.append(dependency[:-1])
+    return result
+
+def get_all_dependencies(g, id_mapping = None, source_mapping = None):
+    if id_mapping == None:
+        id_mapping = get_id_to_node_graph(g)
+    if source_mapping == None:
+        source_mapping = get_source_dict_graph(g)
     root = g.ast_root
     
     dependencies = get_dependencies(root, id_mapping, source_mapping)
-    visual_graph = get_visual_graph(dependencies)
-    return list(set(dependencies)), visual_graph
-    # print(source_mapping)
-    # print(terminal_variables)
-    # print(ifs)
+    existent_dependencies = get_existing_dependencies(root, id_mapping, source_mapping)
+    dependencies.extend(existent_dependencies)
+    dependencies = remove_level_information(dependencies)
+
+    return list(set(dependencies))
 
 def shorten(s):
     if s == "ASSIGNMENT":
-        return "ASS"
+        return "ASGN"
     if s == "EQUAL":
         return "EQ"
     if s == "GREATER":
@@ -267,6 +235,10 @@ def shorten(s):
         return "DVD"
     if s == "INVOCATION":
         return "INVC"
+    if s == "COMPUTED":
+        return "CMP"
+    if s == "WRITE":
+        return "WRT"
     if s.find("_") == -1:
         return s
     parts = s.split("_")
@@ -284,19 +256,22 @@ def get_color(dependency_type):
     elif is_addition_or_substraction(dependency_type) or is_multiplication_or_division(dependency_type):
         return 'orange'
     elif is_boolean_verifier(dependency_type):
-        return 'blue'
+        return 'purple'
     elif is_postfix(dependency_type):
-        return "yellow"
-    elif dependency_type == "MEMBER_SELECT":
-        return "purple"
-    return 'red'
+        return 'yellow'
+    elif is_existent(dependency_type):
+        return 'black'
+    elif dependency_type == 'MEMBER_SELECT':
+        return "red"
+    return 'grey'
 
-def get_visual_graph(dependencies):
+def get_visual_graph(dependencies, variable_types):
     G=pgv.AGraph(directed=True)
-    for (start, end, edge_type, level) in dependencies:
+    for variable_name in variable_types.keys():
+        G.add_node(variable_name, color='blue')
+    for (start, end, edge_type) in dependencies:
         G.add_edge(start, end, color=get_color(edge_type))
         new_edge = G.get_edge(start, end)
-        print(edge_type, shorten(edge_type))
         new_edge.attr['label'] = shorten(edge_type)
     return G
 
@@ -308,9 +283,11 @@ if __name__ == "__main__":
         id_mapping = get_id_to_node_graph(graph)
         source_mapping = get_source_dict_graph(graph)
         # print(get_names(id_mapping.values(), lambda x : x, lambda x : x.contents == "MINUS"))
-        dependencies, visual_graph = get_statement_subtrees(graph)
-        print(dependencies)
-        
-        visual_graph.layout() # default to neato
-        visual_graph.draw('dependencies.png')
+        dependencies = get_all_dependencies(graph, id_mapping, source_mapping)
+        variable_types = get_type_mapping(graph, id_mapping, source_mapping)
+        print(variable_types)
+        visual_graph = get_visual_graph(dependencies, variable_types)
+
+        visual_graph.layout()
+        visual_graph.draw('dependencies.png', prog='circo')
 
