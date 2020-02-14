@@ -9,57 +9,46 @@ import numpy as np
 import string
 import re
 
-def get_variables(node, id_mapping, source_mapping):
-    return get_subtrees_based_on_function(node, id_mapping, source_mapping, \
-        is_variable_node, set())
+def is_number(n):
+    is_number = True
+    try:
+        num = float(n)
+        is_number = num == num
+    except ValueError:
+        is_number = False
+    return is_number
 
-def get_classes(node, id_mapping, source_mapping):
-    return get_subtrees_based_on_function(node, id_mapping, source_mapping, \
-        is_class_node, set())
+def is_number_type(Type):
+    return Type in ('int', 'Integer', 'java.lang.Integer', \
+        'double', 'Double', 'java.lang.Double', \
+        'long', 'Long', 'java.lang.Long', \
+        'short', 'Short', 'java.lang.Short', \
+        'float', 'Float', 'java.lang.Short', \
+        'char') or \
+        is_number(Type)
 
-def get_methods(node, id_mapping, source_mapping):
-    return get_subtrees_based_on_function(node, id_mapping, source_mapping, \
-        is_method_node, set())
-
-# def get_variables_types(variables, id_mapping, source_mapping):
-#     mapping = dict()
-
-def get_name(node, id_mapping, source_mapping):
-    name_node = get_subtrees_based_on_function(node, id_mapping, source_mapping, \
-        is_name_node, set(), 2)
-    if name_node == None or len(name_node) == 0:
-        return ''
-    name_node = name_node[0]
-    return get_all_terminals(name_node, id_mapping, source_mapping)[0].contents
+def is_similar_type(first, second, type_mapping):
+    if is_number_type(first) and is_number_type(second):
+        return True
+    if first not in type_mapping or second not in type_mapping:
+        return False
+    if first == second:
+        return True
+    return (type_mapping[first] == type_mapping[second]) or \
+        (is_number_type(type_mapping[first]) and is_number_type(type_mapping[second]))
 
 def curate(name):
     if name == "LBBRACKET":
         return "["
     elif name == "RBBRACKET":
         return "]"
-    return name
-
-def get_type(node, id_mapping, source_mapping):
-    type_node = get_subtrees_based_on_function(node, id_mapping, source_mapping, \
-        is_type_node, set(), 2)
-    if type_node == None or len(type_node) == 0:
-        return ''
-    type_node = type_node[0]
-    type_name_nodes = get_all_terminals(type_node, id_mapping, source_mapping)
-    # result = ''
-    # result = type_name_nodes[-1].contents
-    # print(type_node)
-    # for type_name_node in type_name_nodes:
-    #     print(type_name_node.contents)
-    #     result += curate(type_name_node.contents)
-    return type_name_nodes[-1].contents
-    
+    return name    
 
 def compute_names_and_types(nodes, id_mapping, source_mapping):
     mapping = dict()
     for node in nodes:
-        name = get_name(node, id_mapping, source_mapping)
-        Type = get_type(node, id_mapping, source_mapping)
+        name = get_variable_name(node, id_mapping, source_mapping)
+        Type = get_variable_type(node, id_mapping, source_mapping)
         if '' in (name, Type):
             continue
         mapping[name] = Type
