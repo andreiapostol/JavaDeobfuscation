@@ -15,7 +15,7 @@ def read_all_proto_names(main_path):
 def create_graphs_and_types(main_path):
     all_protos = read_all_proto_names(main_path)
 
-    for i in tqdm(range(len(all_protos))):
+    for i in (range(len(all_protos))):
         proto = all_protos[i]
         types, dependencies = get_types_and_dependencies(proto)
         

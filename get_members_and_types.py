@@ -30,7 +30,7 @@ def is_number_type(Type):
 def is_similar_type(first, second, type_mapping):
     if is_number_type(first) and is_number_type(second):
         return True
-    if first not in type_mapping or second not in type_mapping:
+    if type_mapping == None or first not in type_mapping or second not in type_mapping:
         return False
     if first == second:
         return True
