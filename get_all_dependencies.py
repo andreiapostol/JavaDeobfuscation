@@ -19,7 +19,7 @@ def create_graphs_and_types(main_path):
         proto = all_protos[i]
         save_name = proto.replace(".proto", ".deps")
         
-        if exists(save_name) or getsize(proto) > 1024 * 512:
+        if exists(save_name) or getsize(proto) > 1024 * 1024:
             continue
         types, dependencies = get_types_and_dependencies(proto)
         
