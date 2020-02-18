@@ -10,9 +10,15 @@ import numpy as np
 import string
 import re
 
+import time
 import pygraphviz as pgv
 
-def handle_single_member_select(ms, id_mapping, source_mapping):
+START_TIME, MAX_TIME = time.time(), 30
+
+def handle_single_member_select(ms, id_mapping, source_mapping, memo):
+    if ms.id in memo:
+        return memo[ms.id]
+    memo[ms.id] = []
     branches = get_subtrees_based_on_function(ms, id_mapping, source_mapping, \
             lambda that_node : not is_terminal(that_node) and that_node != ms, set(), 2)
     if (len(branches) < 2):
@@ -23,18 +29,23 @@ def handle_single_member_select(ms, id_mapping, source_mapping):
     rb_variables = get_terminal_variables(right_branch, id_mapping, source_mapping)
     if (len(rb_variables) == 1 and len(lb_variables) == 1):
         return [(lb_variables[0].contents, rb_variables[0].contents, ms.contents, 0)]
-    inner_left = handle_member_selects(left_branch, id_mapping, source_mapping)
+    inner_left = handle_member_selects(left_branch, id_mapping, source_mapping, memo)
     if (len(rb_variables) == 0 or len(inner_left) == 0):
         return inner_left
     last = inner_left[-1]
     inner_left.append((last[1], rb_variables[-1].contents, ms.contents, 0))
+    memo[ms.id] = inner_left
     return inner_left
 
-def handle_member_selects(node, id_mapping, source_mapping):
+def handle_member_selects(node, id_mapping, source_mapping, memo=dict()):
+    if node.id in memo:
+        return memo[node.id]
+    memo[node.id] = []
     member_selects = get_member_select_dependencies(node, id_mapping, source_mapping)
     sol = []
     for ms in member_selects:
-        sol.extend(handle_single_member_select(ms, id_mapping, source_mapping))
+        sol.extend(handle_single_member_select(ms, id_mapping, source_mapping, memo))
+    memo[node.id] = []
     return sol
 
 def get_names(variables, getter = lambda x : x.contents, condition = lambda x : True):
@@ -67,22 +78,21 @@ def commutable_operations(inner, outer):
             return False
     return True
     
-def get_assignment_dependencies(statement_type_node, id_mapping, source_mapping, variable_types = None, level = 0):
+def get_assignment_dependencies(statement_type_node, id_mapping, source_mapping, variable_types = None, level = 0, memoised=set()):
     branches = get_statement_branches(statement_type_node, id_mapping, source_mapping)
     sol = []
+    start = time.time()
     if (statement_type_node.contents == "IDENTIFIER"):
         return sol
     if len(branches) == 2:
         left_variables = get_terminal_variables(branches[0], id_mapping, source_mapping)
         right_variables = get_terminal_variables(branches[1], id_mapping, source_mapping)
-        lv = get_names(left_variables)
-        rv = get_names(right_variables)
         
         if len(right_variables) == 1:
             for lv in left_variables:
                     sol.append((lv.contents, right_variables[0].contents, statement_type_node.contents, level))
         else:
-            inner_dependencies = get_dependencies(branches[1], id_mapping, source_mapping, level + 1)
+            inner_dependencies = get_dependencies(branches[1], id_mapping, source_mapping, level + 1, memoised=memoised)
             if (len(left_variables) == 1):
                 if (commutable_operations(list(set(map(lambda x : x[2], inner_dependencies))), statement_type_node.contents) \
                     and len(inner_dependencies) > 0 and variable_types != None):
@@ -119,8 +129,9 @@ def get_boolean_verifiers_array(node, id_mapping, source_mapping):
     return get_subtrees_based_on_function(node, id_mapping, source_mapping, \
         is_boolean_verifier_token, set())
 
-def get_dependencies_from_expression(node, id_mapping, source_mapping, variable_types = None, level = 0):
+def get_dependencies_from_expression(node, id_mapping, source_mapping, variable_types = None, level = 0, memoised=dict()):
     dft = []
+    start = time.time()
     if not is_expression_node(node):
         return dft
     edges = source_mapping.get(node.id)
@@ -128,7 +139,7 @@ def get_dependencies_from_expression(node, id_mapping, source_mapping, variable_
         return dft
     statement_type_node = id_mapping[edges[0].destinationId]
     statement_type = statement_type_node.contents
-    return get_assignment_dependencies(statement_type_node, id_mapping, source_mapping, variable_types, level)
+    return get_assignment_dependencies(statement_type_node, id_mapping, source_mapping, variable_types, level, memoised=memoised)
 
 def get_dependencies_from_boolean(node, id_mapping, source_mapping, level = 0):
     dft = []
@@ -177,15 +188,22 @@ def get_all_method_argument_dependencies(root, id_mapping, source_mapping):
         dependencies.extend(current_dependencies)
     return dependencies
 
-def get_dependencies(root, id_mapping, source_mapping, variable_types = None, level = 0):
+def get_dependencies(root, id_mapping, source_mapping, variable_types = None, level = 0, memoised=dict()):
+    if root.id in memoised:
+        return memoised[root.id]
     top_expressions = get_expression_operation_arrays(root, id_mapping, source_mapping)
     top_booleans = get_boolean_verifiers_array(root, id_mapping, source_mapping)
     sol = []
+    memoised[root.id] = sol
     for top_expression in top_expressions:
-        sol.extend(get_dependencies_from_expression(top_expression, id_mapping, source_mapping, variable_types, level))
+        passed = time.time() - START_TIME
+        if (passed > MAX_TIME):
+            break
+        sol.extend(get_dependencies_from_expression(top_expression, id_mapping, source_mapping, variable_types, level, memoised=memoised))
     for top_boolean in top_booleans:
         sol.extend(get_dependencies_from_boolean(top_boolean, id_mapping, source_mapping, level))
     sol.extend(handle_member_selects(root, id_mapping, source_mapping))
+    memoised[root.id] = sol
     return sol
 
 def remove_level_information(dependencies):
@@ -200,14 +218,12 @@ def get_all_dependencies(g, id_mapping = None, source_mapping = None, variable_t
     if source_mapping == None:
         source_mapping = get_source_dict_graph(g)
     root = g.ast_root
-    
-    dependencies = get_dependencies(root, id_mapping, source_mapping, variable_types)
+    dependencies = get_dependencies(root, id_mapping, source_mapping, variable_types, level=0, memoised=dict())
     existent_dependencies = get_existing_dependencies(root, id_mapping, source_mapping)
     dependencies.extend(existent_dependencies)
     method_dependencies = get_all_method_argument_dependencies(root, id_mapping, source_mapping)
     dependencies.extend(method_dependencies)
     dependencies = remove_level_information(dependencies)
-
     return list(set(dependencies))
 
 def shorten(s):
@@ -274,7 +290,7 @@ def get_color(dependency_type):
     return 'grey'
 
 def get_visual_graph(dependencies, variable_types):
-    G=pgv.AGraph(directed=True, strict=False, overlap=False)
+    G=pgv.AGraph(directed=True, strict=True, overlap=False, splines='true', nodesep="2", forcelabels="true")
     for variable_name in variable_types.keys():
         G.add_node(variable_name, color='blue')
     for (start, end, edge_type) in dependencies:
@@ -283,16 +299,22 @@ def get_visual_graph(dependencies, variable_types):
         new_edge.attr['label'] = shorten(edge_type)
     return G
 
-if __name__ == "__main__":
-    filePath = sys.argv[1]
-    with open(filePath, "rb") as f:
+def get_types_and_dependencies(file_name, max_time = 30):
+    with open(file_name, "rb") as f:
         graph = Graph()
         graph.ParseFromString(f.read())
         id_mapping = get_id_to_node_graph(graph)
         source_mapping = get_source_dict_graph(graph)
+        global START_TIME, MAX_TIME
+        START_TIME = time.time()
+        MAX_TIME = max_time
         variable_types = get_type_mapping(graph, id_mapping, source_mapping)
         dependencies = get_all_dependencies(graph, id_mapping, source_mapping, variable_types)
-        visual_graph = get_visual_graph(dependencies, variable_types)
+        return variable_types, dependencies
 
-        visual_graph.layout()
-        visual_graph.draw('dependencies.png', prog='circo')
+if __name__ == "__main__":
+    filePath = sys.argv[1]
+    variable_types, dependencies = get_types_and_dependencies(filePath)
+    visual_graph = get_visual_graph(dependencies, variable_types)
+    visual_graph.layout()
+    visual_graph.draw('dependencies.png', prog='circo')
