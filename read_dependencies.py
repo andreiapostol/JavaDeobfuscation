@@ -1,5 +1,5 @@
 from glob import glob
-from os.path import join
+from os.path import join, exists
 from tqdm import tqdm
 import time
 import pickle
@@ -21,11 +21,14 @@ def draw_dependency(depdict, draw_path="read_dep_example.png"):
     visual_graph = get_visual_graph(dependencies, types)
     visual_graph.layout()
     visual_graph.draw(draw_path, prog='circo')
-    
+
 def main(directory = "./extracted-features"):
     start = time.time()
     all_deps = read_all_dependencies(directory)
-    draw_dependency(all_deps[90])
+    save_name = "all_dependencies.dat"
+    if not exists(save_name):
+        pickle.dump(all_deps, open(save_name, "wb"))
+    draw_dependency(all_deps[123])
 
 if __name__ == "__main__":
     if sys.argv != None and len(sys.argv) >= 2:

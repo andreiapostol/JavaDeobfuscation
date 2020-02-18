@@ -1,7 +1,7 @@
 from get_dependencies import get_types_and_dependencies
 from get_members_and_types import get_type_mapping
 from glob import glob
-from os.path import join
+from os.path import join, exists, getsize
 from tqdm import tqdm
 import time
 import sys
@@ -15,11 +15,14 @@ def read_all_proto_names(main_path):
 def create_graphs_and_types(main_path):
     all_protos = read_all_proto_names(main_path)
 
-    for i in (range(len(all_protos))):
+    for i in tqdm(range(len(all_protos))):
         proto = all_protos[i]
+        save_name = proto.replace(".proto", ".deps")
+        
+        if exists(save_name) or getsize(proto) > 1024 * 512:
+            continue
         types, dependencies = get_types_and_dependencies(proto)
         
-        save_name = proto.replace(".proto", ".deps")
         to_save = dict()
         to_save["types"] = types
         to_save["dependencies"] = dependencies

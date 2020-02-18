@@ -149,9 +149,15 @@ def get_dependencies_from_boolean(node, id_mapping, source_mapping, level = 0):
         return dft
     statement_type= node.contents
     left_branch = get_subtrees_based_on_function(node, id_mapping, source_mapping, \
-        lambda node : node.contents == "LEFT_OPERAND", set(), 2)[0]
+        lambda node : node.contents == "LEFT_OPERAND", set(), 2)
+    if left_branch == None or len(left_branch) < 1:
+        return dft
+    left_branch = left_branch[0]
     right_branch = get_subtrees_based_on_function(node, id_mapping, source_mapping, \
-        lambda node : node.contents == "RIGHT_OPERAND", set(), 2)[0]
+        lambda node : node.contents == "RIGHT_OPERAND", set(), 2)
+    if right_branch == None or len(right_branch) < 1:
+        return dft
+    right_branch = right_branch[0]
     left_terminals = get_terminal_variables(left_branch, id_mapping, source_mapping)
     right_terminals = get_terminal_variables(right_branch, id_mapping, source_mapping)
     if (len(left_terminals) == 0 or len(right_terminals) == 0):
