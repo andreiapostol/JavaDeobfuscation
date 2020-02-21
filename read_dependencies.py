@@ -26,9 +26,9 @@ def main(directory = "./extracted-features"):
     start = time.time()
     all_deps = read_all_dependencies(directory)
     save_name = "all_dependencies.dat"
-    if not exists(save_name):
+    if False and not exists(save_name):
         pickle.dump(all_deps, open(save_name, "wb"))
-    draw_dependency(all_deps[123])
+    draw_dependency(all_deps[11192])
 
 if __name__ == "__main__":
     if sys.argv != None and len(sys.argv) >= 2:
