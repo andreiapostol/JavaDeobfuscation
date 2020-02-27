@@ -1,10 +1,12 @@
-{"task_params": {},
+{"task_params": {
+    "initial_node_feature_size": 100
+},
  "model_params": {"graph_num_layers": 3,
                   "hidden_size": 100, 
                   "max_nodes_in_batch": 100000,
                   "graph_layer_input_dropout_keep_prob": 0.9,
                   "graph_rnn_cell": "GRU",
-                  "graph_activation_function": "tanh",
+                  "graph_activation_function": "relu",
                   "message_aggregation_function": "sum"
                  }
 }

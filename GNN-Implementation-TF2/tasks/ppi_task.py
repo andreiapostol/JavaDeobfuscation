@@ -39,6 +39,7 @@ class PPI_Task(Sparse_Graph_Task):
         super().__init__(params)
 
         # Things that will be filled once we load data:
+        self.number = 0
         self.__num_edge_types = 0
         self.__initial_node_feature_size = 0
         self.__num_labels = 0
@@ -208,6 +209,8 @@ class PPI_Task(Sparse_Graph_Task):
                                 model_placeholders: Dict[str, tf.Tensor],
                                 max_nodes_per_batch: int) \
             -> Iterator[MinibatchData]:
+        self.number += 1
+        print("MINIBATCHHH!!! " + str(self.number))
         if data_fold == DataFold.TRAIN:
             np.random.shuffle(data)
             out_layer_dropout_keep_prob = self.params['out_layer_dropout_keep_prob']

@@ -64,6 +64,9 @@ class Citation_Network_Task(Sparse_Graph_Task):
         train_data, valid_data, _ = self.__load_data(path)
         self._loaded_data[DataFold.TRAIN] = train_data
         self._loaded_data[DataFold.VALIDATION] = valid_data
+        print("ALL TRAINING DATA SHAPE IS " + str(np.shape(train_data)))
+        # while True:
+        #     x = 5
 
     def load_eval_data_from_path(self, path: RichPath) -> Iterable[Any]:
         _, _, test_data = self.__load_data(path)
@@ -85,6 +88,38 @@ class Citation_Network_Task(Sparse_Graph_Task):
             [self.__preprocess_data(adj_list, features, np.argmax(valid_labels, axis=1), valid_mask)]
         test_data = \
             [self.__preprocess_data(adj_list, features, np.argmax(test_labels, axis=1), test_mask)]
+        # print("Training data shape is " + str(np.shape(train_data)))
+        # print("Validation data shape is " + str(np.shape(valid_data)))
+        # print("Test data shape is " + str(np.shape(test_data)))
+        print("Initial node feature size is " + str(self.__initial_node_feature_size))
+        print("Num output classes size is " + str(self.__num_output_classes))
+        # train_data[0][0] => adj_lists, shape = (2, )
+        citation_data = train_data[0]
+        self_loop_adj_list = citation_data[0][0]
+        flat_adj_list = citation_data[0][1]
+        print("Self loop adj list shape is " + str(np.shape(self_loop_adj_list)))
+        print("Flat adj list shape is " + str(np.shape(flat_adj_list)))
+        print("SELF " + str(self_loop_adj_list[123]))
+        print("FLAT " + str(flat_adj_list[1]))
+
+        num_inc_edges = citation_data[1]
+        print("Num incoming edges shape is " + str(np.shape(num_inc_edges)))
+
+        feats = citation_data[2]
+        print("Features shape is " + str(np.shape(feats)))
+
+        labs = citation_data[3]
+        print("Labels shape is " + str(np.shape(labs)))
+        print("Some labels: " + str(labs[111]))
+
+        mask = citation_data[4]
+        print("Mask shape is " + str(np.shape(mask)))
+        print("Some from mask: " + str(mask[123]))
+        
+        # while True:
+        #     x = 5
+
+        # print((train_data[0])
         return train_data, valid_data, test_data
 
     def __preprocess_data(self, adj_list: Dict[int, List[int]], features, labels, mask) -> CitationData:
@@ -108,6 +143,9 @@ class Citation_Network_Task(Sparse_Graph_Task):
                             labels=labels,
                             mask=mask)
 
+    def infLoop():
+        while True:
+            x = 5
     # -------------------- Model Construction --------------------
     def make_task_output_model(self,
                                placeholders: Dict[str, tf.Tensor],
@@ -119,16 +157,19 @@ class Citation_Network_Task(Sparse_Graph_Task):
             tf.compat.v1.placeholder_with_default(input=tf.constant(1.0, dtype=tf.float32),
                                         shape=[],
                                         name='out_layer_dropout_keep_prob')
-
         final_node_representations = \
             tf.nn.dropout(model_ops['final_node_representations'],
                           rate=1.0 - placeholders['out_layer_dropout_keep_prob'])
+        print("Final node representations shape is " + str(np.shape(model_ops["final_node_representations"])) + " " + \
+            str(np.shape(final_node_representations)))
+
         output_label_logits = \
             tf.keras.layers.Dense(units=self.__num_output_classes,
                                   use_bias=False,
                                   activation=None,
                                   name="OutputDenseLayer",
                                   )(final_node_representations)  # Shape [V, Classes]
+        print("Output label logits shape is " + str(np.shape(output_label_logits)))
 
         num_masked_preds = tf.reduce_sum(input_tensor=placeholders['mask'])
         losses = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=output_label_logits,
@@ -159,7 +200,13 @@ class Citation_Network_Task(Sparse_Graph_Task):
             out_layer_dropout_keep_prob = self.params['out_layer_dropout_keep_prob']
         else:
             out_layer_dropout_keep_prob = 1.0
-
+        print("MINIBATCCHHHHH!!!")
+        print(np.shape(data.features))
+        print(type(data.features), type(data.adj_lists), type(data.num_incoming_edges), type(data.labels), type(data.mask))
+        print(np.shape(data.adj_lists), np.shape(data.adj_lists[1]))
+        print(np.shape(data.num_incoming_edges))
+        while True:
+            x = 5
         feed_dict = {
             model_placeholders['initial_node_features']: data.features,
             model_placeholders['adjacency_lists'][0]: data.adj_lists[0],

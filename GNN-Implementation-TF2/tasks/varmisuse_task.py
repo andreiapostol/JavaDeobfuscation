@@ -455,6 +455,7 @@ class VarMisuse_Task(Sparse_Graph_Task):
                                 model_placeholders: Dict[str, tf.Tensor],
                                 max_nodes_per_batch: int) \
             -> Iterable[MinibatchData]:
+        print("MINIBATCHHH!!!")
         if data_fold == DataFold.TRAIN:
             np.random.shuffle(data)
 
