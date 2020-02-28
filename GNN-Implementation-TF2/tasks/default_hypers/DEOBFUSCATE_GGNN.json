@@ -1,12 +1,17 @@
 {"task_params": {
-    "initial_node_feature_size": 100
 },
- "model_params": {"graph_num_layers": 3,
-                  "hidden_size": 100, 
+ "model_params": {"graph_num_layers": 5,
+                  "hidden_size": 150, 
                   "max_nodes_in_batch": 100000,
-                  "graph_layer_input_dropout_keep_prob": 0.9,
+                  "graph_layer_input_dropout_keep_prob": 0.8,
                   "graph_rnn_cell": "GRU",
-                  "graph_activation_function": "relu",
-                  "message_aggregation_function": "sum"
+                  "graph_activation_function": "tanh",
+                  "graph_model_activation_function": "tanh",
+                  "message_aggregation_function": "sum",
+                  "learning_rate": 0.0015,
+                  "learning_rate_decay": 0.98,
+                  "momentum": 0.85,
+                  "max_epochs": 51,
+                  "patience": 51
                  }
 }

@@ -80,6 +80,10 @@ class Sparse_Graph_Model(ABC):
     def best_model_file(self):
         return os.path.join(self.result_dir, "%s_best_model.pickle" % self.run_id)
 
+    @property
+    def auto_save_file(self):
+        return os.path.join(self.result_dir, "%s_autosave.pickle" % self.run_id)
+
     # -------------------- Model Saving/Loading --------------------
     def initialize_model(self) -> None:
         with self.sess.graph.as_default():
@@ -266,6 +270,7 @@ class Sparse_Graph_Model(ABC):
         start_time = time.time()
         processed_graphs, processed_nodes, processed_edges = 0, 0, 0
         epoch_loss = 0.0
+        epoch_accuracy = 0.0
         for step, batch_data in enumerate(batch_iterator):
             if data_fold == DataFold.TRAIN:
                 batch_data.feed_dict[self.__placeholders['graph_layer_input_dropout_keep_prob']] = \
@@ -284,11 +289,12 @@ class Sparse_Graph_Model(ABC):
                 fetch_dict['train_step'] = self.__ops['train_step']
             fetch_results = self.sess.run(fetch_dict, feed_dict=batch_data.feed_dict)
             epoch_loss += fetch_results['task_metrics']['loss'] * batch_data.num_graphs
+            epoch_accuracy += fetch_results['task_metrics']['accuracy'] * batch_data.num_graphs
             task_metric_results.append(fetch_results['task_metrics'])
 
             if not quiet:
-                print("Running %s, batch %i (has %i graphs). Loss so far: %.4f"
-                      % (epoch_name, step, batch_data.num_graphs, epoch_loss / processed_graphs),
+                print("Running %s, batch %i (has %i graphs). Loss so far: %.4f. Accuracy so far: %.4f."
+                      % (epoch_name, step, batch_data.num_graphs, epoch_loss / processed_graphs, epoch_accuracy / processed_graphs * 100),
                       end='\r')
             if summary_writer:
                 summary_writer.add_summary(fetch_results['tf_summaries'], fetch_results['total_num_graphs'])
@@ -350,6 +356,10 @@ class Sparse_Graph_Model(ABC):
                     self.task.pretty_print_epoch_task_metrics(valid_task_metrics, valid_num_graphs)
                 self.log_line(" Valid: loss: %.5f || %s || graphs/sec: %.2f | nodes/sec: %.0f | edges/sec: %.0f"
                               % (valid_loss, valid_metric_descr, valid_graphs_p_s, valid_nodes_p_s, valid_edges_p_s))
+
+                if epoch % 3 == 0:
+                    self.log_line("Autosaving model...")
+                    self.save_model(self.auto_save_file)
 
                 if early_stopping_metric < best_valid_metric:
                     self.save_model(self.best_model_file)

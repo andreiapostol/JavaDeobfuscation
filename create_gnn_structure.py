@@ -157,7 +157,7 @@ def create_multiple_graphs_data(graphs):
 
     
 
-def main(file_name = "all_dependencies(<500KB).dat", concatenate=False):
+def main(file_name = "all_dependencies(<1MB).dat", concatenate=False):
     mapping = load_dependencies(file_name)
     gnn_data = None
     if concatenate:

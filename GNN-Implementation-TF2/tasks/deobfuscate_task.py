@@ -32,9 +32,9 @@ class Deobfuscate_Task(Sparse_Graph_Task):
             'add_self_loop_edges': False,
             'tie_fwd_bkwd_edges': False,
             'use_graph': True,
-            'activation_function': "tanh",
+            'activation_function': "relu",
             'out_layer_dropout_keep_prob': 1.0,
-            'initial_node_feature_size': 100
+            'initial_node_feature_size': 150
 
         })
         return params
@@ -109,16 +109,12 @@ class Deobfuscate_Task(Sparse_Graph_Task):
     def create_graph_sample(self, old_graph, node_embedder, num_edge_types):
         old_adjacency_lists = old_graph["adj_lists"]
         old_nodes = old_graph["nodes"]
-        # initial_node_features = np.zeros((self.__num_labels, self.__initial_node_feature_size
         old_nodes_for_embedding = np.array(old_nodes)
         for i in range(len(old_nodes)):
-            if i >= old_graph["user_defined_nodes_number"]:
+            if i < old_graph["user_defined_nodes_number"]:
                 old_nodes_for_embedding[i] = self.__num_labels
 
         initial_node_features = node_embedder(old_nodes_for_embedding).numpy()
-        # initial_node_features = tf.nn.embedding_lookup(node_embedder, old_nodes)
-        # print("INITIAL " + str(np.shape(initial_node_features)))
-        # print("MAPPED " + str(np.shape(initial_node_features)))
         type_to_num_incoming_edges = np.zeros((num_edge_types, len(old_nodes)))
         
         old_node_to_new_node = dict()
@@ -130,21 +126,12 @@ class Deobfuscate_Task(Sparse_Graph_Task):
 
         new_adjacency_lists = []
         for (edge_id, edges) in enumerate(old_adjacency_lists):
-            # new_adjacency_lists.append([[None, None] for _ in edges])
             new_adjacency_lists.append(np.zeros((len(edges), 2)))
-            # new_adjacency_lists.append([])
             for (idx, (start_node, end_node)) in enumerate(edges):
                 new_adjacency_lists[-1][idx][0] = old_node_to_new_node[start_node]
                 new_adjacency_lists[-1][idx][1] = old_node_to_new_node[end_node]
-                # new_adjacency_lists[-1].append((old_node_to_new_node[start_node], old_node_to_new_node[end_node]))
                 type_to_num_incoming_edges[edge_id][old_node_to_new_node[end_node]] += 1
-            # print(np.shape(new_adjacency_lists[-1]))
-        # for (idx, l) in enumerate(new_adjacency_lists):
-        #     new_adjacency_lists[idx] = np.array(l)
-        # print(type(new_adjacency_lists), type(new_adjacency_lists[0]), type(new_adjacency_lists[0][0]))
-        # while True:
-        #     x=5
-        # new_adjacency_lists = np.array(new_adjacency_lists)
+
         nodes_mask = [i < old_graph["user_defined_nodes_number"] for (i, _) in enumerate(old_nodes)]
         nodes_mask = np.array(nodes_mask, dtype=bool)
 
@@ -246,6 +233,8 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                                   name="OutputDenseLayer",
                                   )(final_node_representations)  # Shape [V, Classes]
         num_masked_preds = tf.reduce_sum(input_tensor=tf.cast(placeholders['nodes_mask'], tf.float32))
+        # losses = tf.nn.sigmoid_cross_entropy_with_logits(logits=output_label_logits,
+        #                                             labels=placeholders['labels'])
         losses = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=output_label_logits,
                                                                 labels=placeholders['labels'])
         total_loss = tf.reduce_sum(input_tensor=losses * tf.cast(placeholders['nodes_mask'], tf.float32))
@@ -253,22 +242,58 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         correct_preds = tf.equal(most_likely_pred,
                             placeholders['labels'])
         num_masked_correct = tf.reduce_sum(input_tensor=tf.cast(correct_preds, tf.float32) * tf.cast(placeholders['nodes_mask'], tf.float32))
-        # num_masked_correct = tf.reduce_sum(input_tensor=tf.cast(output_label_logits[:1], tf.float32))
-        # num_masked_correct = tf.reduce_sum(input_tensor=tf.cast(placeholders['labels'][2:3], tf.float32))
-        # num_masked_correct = tf.reduce_sum(input_tensor=tf.cast(most_likely_pred[2:3], tf.float32))
         accuracy = num_masked_correct / num_masked_preds
         tf.compat.v1.summary.scalar('accuracy', accuracy)
-        
-        print("Losses shape is " + str(np.shape(total_loss)))
-        print("Correct preds shape is " + str(np.shape(correct_preds)))
-        print("Num masked correct is " + str(np.shape(num_masked_correct)))
-        print()
 
         model_ops['task_metrics'] = {
             'loss': total_loss / num_masked_preds,
             'total_loss': total_loss,
             'accuracy': accuracy,
         }
+    
+    def combine_graphs(self, first_graph, second_graph):
+        old_nodes_length = np.shape(first_graph.node_features)[0]
+
+        node_features = np.concatenate((first_graph.node_features, second_graph.node_features), axis=0)
+
+        # print(np.shape(node_features), np.shape(first_graph.node_features), np.shape(second_graph.node_features))
+        type_to_num_incoming_edges = np.zeros((np.shape(first_graph.type_to_num_incoming_edges)[0], old_nodes_length + len(second_graph.node_features)))
+        type_to_num_incoming_edges[:,:old_nodes_length] = first_graph.type_to_num_incoming_edges
+        type_to_num_incoming_edges[:,old_nodes_length:] = second_graph.type_to_num_incoming_edges
+
+        # print(first_graph.type_to_num_incoming_edges[1][10:20])
+        # print(second_graph.type_to_num_incoming_edges[1][10:20])
+        # print(type_to_num_incoming_edges[1][10:20])
+        # print(type_to_num_incoming_edges[1][old_nodes_length+10:old_nodes_length+20])
+        # print(sum(x > 1 for x in first_graph.type_to_num_incoming_edges[0]))
+        # print(sum(x > 1 for x in second_graph.type_to_num_incoming_edges[0]))
+        # print(sum(x > 1 for x in type_to_num_incoming_edges[0]))
+        # print()
+
+        labels = np.concatenate((first_graph.labels, second_graph.labels), axis=0)
+        nodes_mask = np.concatenate((first_graph.nodes_mask, second_graph.nodes_mask), axis=0)
+
+        adjacency_lists = []
+        for (edges_id, edges) in enumerate(first_graph.adjacency_lists):
+            adjacency_lists.append(np.zeros((len(edges) + len(second_graph.adjacency_lists[edges_id]), 2)))
+            for (idx, values) in enumerate(edges):
+                adjacency_lists[-1][idx][0] = values[0]
+                adjacency_lists[-1][idx][1] = values[1]
+            for (idx, values) in enumerate(second_graph.adjacency_lists[edges_id]):
+                adjacency_lists[-1][idx + len(edges)][0] = values[0] + old_nodes_length
+                adjacency_lists[-1][idx + len(edges)][1] = values[1] + old_nodes_length
+
+        # print(adjacency_lists[0][:5])
+        # print(first_graph.adjacency_lists[0][:5])
+        # print(adjacency_lists[0][len(first_graph.adjacency_lists[0]):len(first_graph.adjacency_lists[0])+5])
+        # print(second_graph.adjacency_lists[0][:5])
+        # print(old_nodes_length)
+        return GraphSample(adjacency_lists, \
+            type_to_num_incoming_edges, \
+            node_features, \
+            nodes_mask, \
+            labels
+            )
 
     def make_minibatch_iterator(self,
                                 data: Iterable[Any],
@@ -276,49 +301,37 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                                 model_placeholders: Dict[str, tf.Tensor],
                                 max_nodes_per_batch: int,
                                 ) -> Iterator[MinibatchData]:
-        if data_fold == DataFold.TRAIN:
+        if data_fold in (DataFold.TRAIN, DataFold.VALIDATION):
             np.random.shuffle(data)
+        
+        combined_graphs = None
+        end_val = int(len(data) / 2)
+        for i in range(end_val):
+            if i % self.batch_graph_size == 0:
+                combined_graphs = data[i]
+            else:
+                cur_graph = data[i]
+                combined_graphs = self.combine_graphs(combined_graphs, cur_graph)
+            
+            if (i + 1) % self.batch_graph_size == 0 or i == end_val - 1:
+                feed_dict = {
+                    model_placeholders['initial_node_features']: combined_graphs.node_features,
+                    model_placeholders['type_to_num_incoming_edges']: combined_graphs.type_to_num_incoming_edges,
+                    model_placeholders['num_graphs']: self.batch_graph_size if (i != end_val - 1) or (end_val % self.batch_graph_size == 0) \
+                        else end_val % self.batch_graph_size,
+                    model_placeholders['labels']: combined_graphs.labels,
+                    model_placeholders['nodes_mask']: combined_graphs.nodes_mask
+                }
 
-        # while True:
-            # if isinstance(data, Iterator):
-            #     data_iter = data
-            # else:
-            #     data_iter = iter(data)
+                for i in range(self.__num_edge_types):
+                    feed_dict[model_placeholders["adjacency_lists"][i]] = combined_graphs.adjacency_lists[i]
 
-            # cur_graph = next(data_iter, None)  # type: CitationData
-            # if cur_graph == None:
-            #     return None
-        for i in range(len(data)):
-            cur_graph = data[i]
-            # print(str(cur_graph) + " is the cur_graph. Its shape is " + str(np.shape(cur_graph)))
-            print()
-            print()
-            # print(type(cur_graph.node_features), type(cur_graph.adjacency_lists), type(cur_graph.type_to_num_incoming_edges), type(cur_graph.labels), type(cur_graph.nodes_mask))
-            # print(np.shape(cur_graph.adjacency_lists), np.shape(cur_graph.adjacency_lists[0]), np.shape(cur_graph.adjacency_lists[0][0]))
-            # print(type(cur_graph.adjacency_lists), type(cur_graph.adjacency_lists[0]), type(cur_graph.adjacency_lists[0][0]))
-            print("Total edges " + str(sum(len(adj_list) for adj_list in cur_graph.adjacency_lists)))
-            # print(cur_graph.adjacency_lists, cur_graph.adjacency_lists[0], cur_graph.adjacency_lists[0][0])
-            # print("L first of " + str(np.shape(cur_graph.type_to_num_incoming_edges)))
-
-            print(np.shape(model_placeholders['adjacency_lists']))
-
-            feed_dict = {
-                model_placeholders['initial_node_features']: cur_graph.node_features,
-                model_placeholders['type_to_num_incoming_edges']: cur_graph.type_to_num_incoming_edges,
-                model_placeholders['num_graphs']: 1,
-                model_placeholders['labels']: cur_graph.labels,
-                model_placeholders['nodes_mask']: cur_graph.nodes_mask
-            }
-
-            for i in range(self.__num_edge_types):
-                feed_dict[model_placeholders["adjacency_lists"][i]] = cur_graph.adjacency_lists[i]
-            print("Feed dict " + str(type(feed_dict)) + " " + str(np.shape(feed_dict)))
-            print("EXITS!")
-            yield MinibatchData(feed_dict=feed_dict,
-                num_graphs = 1,
-                num_nodes = np.shape(cur_graph.node_features)[0],
-                num_edges = sum(len(adj_list) for adj_list in cur_graph.adjacency_lists)
-            )
+                yield MinibatchData(feed_dict=feed_dict,
+                    num_graphs = self.batch_graph_size if (i != end_val - 1) or (end_val % self.batch_graph_size == 0) \
+                        else end_val % self.batch_graph_size,
+                    num_nodes = np.shape(combined_graphs.node_features)[0],
+                    num_edges = sum(len(adj_list) for adj_list in combined_graphs.adjacency_lists)
+                )
 
 
     def early_stopping_metric(self,
@@ -328,5 +341,6 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         return np.sum([m['total_loss'] for m in task_metric_results]) / num_graphs
 
     def pretty_print_epoch_task_metrics(self, task_metric_results: List[Dict[str, np.ndarray]], num_graphs: int) -> str:
-        return "Acc: %.2f%%" % (task_metric_results[0]['accuracy'],)
+        return "Acc: %.2f%%" % (np.sum([m['accuracy'] for m in task_metric_results]) / len(task_metric_results)*100,)
+        # return "Acc: %.2f%%" % (task_metric_results[0]['accuracy']*100,)
 
