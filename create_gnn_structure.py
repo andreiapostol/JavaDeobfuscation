@@ -39,58 +39,17 @@ def get_edges_name_mapping(types_deps):
             occurences[dep_type] += 1
     return edge_name_to_index_mapping, edge_index_to_name_mapping, occurences
 
-def get_nodelabels_and_newedges(types_deps, edge_name_to_index_mapping):
-    new_edges = []
-    node_labels = []
-    for type_dep in types_deps:
-        current_deps = type_dep["dependencies"]
-        seen_name_dict = dict()
-        for (start, end, edge_type) in current_deps:
-            if start not in seen_name_dict:
-                seen_name_dict[start] = len(node_labels)
-                node_labels.append(start)
-            if end not in seen_name_dict:
-                seen_name_dict[end] = len(node_labels)
-                node_labels.append(end)
-            new_edges.append((seen_name_dict[start], seen_name_dict[end], \
-                edge_name_to_index_mapping[edge_type]))
-    return node_labels, new_edges
-
-def get_adj_lists(new_edges, edge_name_to_index_mapping):
-    adj_lists = [[] for _ in range(len(edge_name_to_index_mapping))]
-    for (start_id, end_id, edge_type) in new_edges:
-        adj_lists[edge_type].append([start_id, end_id])
-    return adj_lists
-
-# def create_gnn_data(types_deps):
-#     all_user_names, total_user_nodes = get_user_names(types_deps)
-#     edge_name_to_index_mapping, edge_index_to_name_mapping = \
-#         get_edges_name_mapping(types_deps)
-    
-#     node_labels, new_edges = get_nodelabels_and_newedges(types_deps, edge_name_to_index_mapping)
-#     adj_lists = get_adj_lists(new_edges, edge_name_to_index_mapping)
-#     gnn_data = dict()
-#     gnn_data["node_labels"] = node_labels
-#     gnn_data["adj_lists"] = adj_lists
-#     gnn_data["edge_name_to_index_mapping"] = edge_name_to_index_mapping
-#     gnn_data["edge_index_to_name_mapping"] = edge_index_to_name_mapping
-#     return gnn_data
-
-# def filter_unknown_nodes(all_graphs, new_length):
-#     id_to_usecases = dict()
-#     for i in tqdm(range(len(graphs))):
-#         cur_graph = graphs[i]
-#         if (cur_graph["user_defined_nodes_number"] > 0):
-#             nodes = cur_graph["nodes"]
-#             for node in nodes:
-#                 if node not in id_to_usecases:
-#                     id_to_usecases[node] = 0
-#                 id_to_usecases[node] += 1
-#     sorted_ids = sorted(id_to_usecases.items(), key=lambda kv: -1 * kv[1])
-#     most_k_used = dict()
-#     for i in range(new_length - 1):
-#         most_k_used[sorted_ids[i][0]] = i
-#     return most_k_used
+def get_type_mapping(graphs, type_length):
+    type_name_to_id = dict()
+    type_id_to_name = []
+    for graph in graphs:
+        types = graph["types"].values()
+        for t in types:
+            if t not in type_name_to_id:
+                type_name_to_id[t] = len(type_id_to_name)
+                type_id_to_name.append(t)
+    type_name_to_id["UNKNOWN"] = len(type_id_to_name)
+    return type_name_to_id, type_id_to_name
 
 def get_all_tokens_mapping(graphs, new_length_user, new_length_other):
     from_name_to_id = dict()
@@ -100,13 +59,13 @@ def get_all_tokens_mapping(graphs, new_length_user, new_length_other):
 
     for graph in graphs:
         types = graph["types"]
-        for t in types.keys():
-            if t not in from_name_to_id:
-                from_name_to_id[t] = len(from_id_to_name)
-                from_id_to_name.append(t)
-            if from_name_to_id[t] not in from_id_to_usecases:
-                from_id_to_usecases[from_name_to_id[t]] = 0
-            from_id_to_usecases[from_name_to_id[t]] += 1
+        for var_name in types.keys():
+            if var_name not in from_name_to_id:
+                from_name_to_id[var_name] = len(from_id_to_name)
+                from_id_to_name.append(var_name)
+            if from_name_to_id[var_name] not in from_id_to_usecases:
+                from_id_to_usecases[from_name_to_id[var_name]] = 0
+            from_id_to_usecases[from_name_to_id[var_name]] += 1
 
     total_user_defined = len(from_id_to_name)
 
@@ -126,7 +85,6 @@ def get_all_tokens_mapping(graphs, new_length_user, new_length_other):
                     from_id_to_usecases[from_name_to_id[end]] = 0
                 from_id_to_usecases[from_name_to_id[end]] += 1
     sorted_ids = sorted(from_id_to_usecases.items(), key=lambda kv: -1 * kv[1])
-    # sorted_ids = sorted(sorted_ids, key=lambda kv: -1 if kv[0] <= total_user_defined else 1)
 
     renewed_name_to_id = dict()
     renewed_id_to_name = []
@@ -152,7 +110,7 @@ def get_all_tokens_mapping(graphs, new_length_user, new_length_other):
     return renewed_name_to_id, renewed_id_to_name, new_length_user
     # return from_name_to_id, from_id_to_name, total_user_defined    
 
-def create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping):
+def create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping, type_mapping):
     new_graphs = []
 
     for graph in graphs:
@@ -163,13 +121,14 @@ def create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping):
         deps = graph["dependencies"]
         new_deps = []
         adj_lists = [[] for _ in edge_name_to_index_mapping.keys()]
+        returned_types = []
 
-        for t in types.keys():
-            t = t.lower()
-            if t not in added_nodes_mapping and t in name_to_id_mapping:
-                # added_nodes_set.add(t)
-                added_nodes_mapping[t] = len(total_nodes)
-                total_nodes.append(name_to_id_mapping.get(t, len(name_to_id_mapping)))
+        for (var_name, type_name) in types.items():
+            var_name = var_name.lower()
+            if var_name not in added_nodes_mapping and var_name in name_to_id_mapping:
+                added_nodes_mapping[var_name] = len(total_nodes)
+                total_nodes.append(name_to_id_mapping.get(var_name, len(name_to_id_mapping)))
+                returned_types.append(type_mapping[type_name])
         user_defined_nodes_number = len(added_nodes_mapping)
         
         deps = filter(lambda x: x[0] in name_to_id_mapping or x[1] in name_to_id_mapping, deps)
@@ -180,9 +139,11 @@ def create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping):
             if start not in added_nodes_mapping:
                 added_nodes_mapping[start] = len(total_nodes)
                 total_nodes.append(name_to_id_mapping.get(start, len(name_to_id_mapping)))
+                returned_types.append(len(type_mapping))
             if end not in added_nodes_mapping:
                 added_nodes_mapping[end] = len(total_nodes)
                 total_nodes.append(name_to_id_mapping.get(end, len(name_to_id_mapping)))
+                returned_types.append(len(type_mapping))
             if end != '_' and dep_type in edge_name_to_index_mapping:
                 # current_edge = (name_to_id_mapping.get(start, len(name_to_id_mapping)), name_to_id_mapping.get(end, len(name_to_id_mapping)), \
                 #     edge_name_to_index_mapping[dep_type])
@@ -196,6 +157,8 @@ def create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping):
         cur_graph["user_defined_nodes_number"] = user_defined_nodes_number
         cur_graph["edges"] = new_deps
         cur_graph["adj_lists"] = adj_lists
+        cur_graph["types"] = returned_types
+
         new_graphs.append(cur_graph)
     
     return new_graphs
@@ -211,11 +174,15 @@ def get_n_edges_mapping(occurences, to_keep = 20):
     return new_name_to_id, new_id_to_name
 
 def create_multiple_graphs_data(graphs):
-    all_user_variables_mapping, total_user_variables_used = get_user_names(graphs)
+    all_user_variables_mapping, _ = get_user_names(graphs)
     _, _, occurences = get_edges_name_mapping(graphs)
     edge_name_to_index_mapping, edge_index_to_name_mapping = get_n_edges_mapping(occurences, 20)
-    name_to_id_mapping, id_to_name_list, total_user_defined = get_all_tokens_mapping(graphs, 1000, 7500)
+    name_to_id_mapping, id_to_name_list, total_user_defined = get_all_tokens_mapping(graphs, 1000, 10000)
+    type_to_id, id_to_type = get_type_mapping(graphs, 100)
+
     print("Total number of user defined tokens is " + str(total_user_defined) + " total: " + str(len(id_to_name_list)))
+    print("Total number of different types is " + str(len(type_to_id)))
+
     to_return = dict()
     to_return["name_to_id_mapping"] = name_to_id_mapping
     to_return["ids_to_names"] = id_to_name_list
@@ -223,27 +190,32 @@ def create_multiple_graphs_data(graphs):
     to_return["number_of_edges"] = len(edge_index_to_name_mapping)
     to_return["edge_name_to_id"] = edge_name_to_index_mapping
     to_return["edge_id_to_name"] = edge_index_to_name_mapping
+    to_return["type_to_id"] = type_to_id
+    to_return["id_to_type"] = id_to_type
 
-    new_graphs = create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping)
+    new_graphs = create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping, type_to_id)
+    to_return["graphs"] = new_graphs
+
     index = len(new_graphs)-1
     old = graphs[index]
     newg = new_graphs[index]
-    print(old["types"])
-    print(newg["nodes"], newg["user_defined_nodes_number"])
-    print(newg["adj_lists"])
-    print(to_return["total_user_defined_nodes"])
-    to_return["graphs"] = new_graphs
+    print("\nSome old nodes from a random graph " + str(old["types"]))
+    print("\nSome new graph properties:")
+    print("\nNodes " + str(newg["nodes"]) + " user defined total " + str(newg["user_defined_nodes_number"]))
+    print("\nAdjacency lists: " + str(newg["adj_lists"]) + ", total # edges is: " + str(sum([len(a) for a in newg["adj_lists"]])))
+    print("\nTypes: " + str(newg["types"]))
+
+    print("\nAll user defined nodes number: " + str(to_return["total_user_defined_nodes"]))
+    
     return to_return
 
-def main(file_name = "all_dependencies(<1MB).dat", concatenate=False):
+def main(file_name = "all_dependencies(<1MB).dat"):
     mapping = load_dependencies(file_name)
-    gnn_data = None
-    if concatenate:
-        gnn_data = create_gnn_data(mapping)
-    else:
-        gnn_data = create_multiple_graphs_data(mapping)
+    gnn_data = create_multiple_graphs_data(mapping)
+
     # save_name = "SerializedData/" + file_name.replace(".dat", "(conc).gnn")
     save_name = "GNN-Implementation-TF2/data/deobfuscation/train.pkl.gz"
+
     pickle.dump(gnn_data, open(save_name, "wb"))
 
 if __name__ == "__main__":

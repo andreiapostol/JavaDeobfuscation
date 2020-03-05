@@ -22,6 +22,7 @@ class GraphSample(NamedTuple):
     adjacency_lists: List[np.ndarray]
     type_to_num_incoming_edges: np.ndarray
     node_features: np.ndarray
+    types: np.ndarray
     nodes_mask: np.ndarray
     labels: np.ndarray
 
@@ -89,6 +90,7 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         return DataFold.TEST in self._loaded_data
 
     def load_data(self, path: RichPath) -> None:
+
         all_loaded_graphs, properties = self.__load_data(path, data_fold=DataFold.TRAIN)
         print("INITIAL FEATURE SIZE " + str(self.__initial_node_feature_size))
 
@@ -98,28 +100,32 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         # self.node_embedder = properties["node_embedder"]
         self.edge_mapping = properties["edge_mapping"]
         self.__num_labels = properties["__num_labels"] + 1
+        self.__num_types = properties["__num_types"]
         self.__num_edge_types = properties["__num_edge_types"]
         # self.num_edge_types = self.__num_edge_types
 
         size = len(all_loaded_graphs)
-        self._loaded_data[DataFold.TRAIN] = all_loaded_graphs[:int(1.5*size/2)]
-        self._loaded_data[DataFold.VALIDATION] = all_loaded_graphs[int(1.5*size/2):]
-        self.embedding_layer = tf.keras.layers.Embedding(input_dim=self.__num_labels + 1, output_dim=self.__initial_node_feature_size)
+        self._loaded_data[DataFold.TRAIN] = all_loaded_graphs[:int(size/2)]
+        self._loaded_data[DataFold.VALIDATION] = all_loaded_graphs[int(size/2):2*int(size/2)]
+
+        self.name_embedding_layer = tf.keras.layers.Embedding(input_dim=self.__num_labels + 1, output_dim = int(self.__initial_node_feature_size / 2))
+        self.type_embedding_layer = tf.keras.layers.Embedding(input_dim=self.__num_types + 1, output_dim = int(self.__initial_node_feature_size / 2))
 
         # print(self._loaded_data[DataFold.TRAIN][0].node_features)
         print("Loaded all data! The number of diff nodes is " + str(self.__num_labels) + ", the number of diff edges is " + str(self.__num_edge_types) + \
-            ", the total number of all graphs is " + str(len(all_loaded_graphs)))
+            ", the total number of all graphs is " + str(len(all_loaded_graphs)) + ", number of types " + str(self.__num_types))
     
     def create_graph_sample(self, old_graph, num_edge_types, num_labels):
         old_adjacency_lists = old_graph["adj_lists"]
         old_nodes = old_graph["nodes"]
-        old_nodes_for_embedding = np.array(old_nodes, dtype=int)
+        old_types = old_graph["types"]
+
+        node_name_ids = np.array(old_nodes, dtype=int)
+        node_type_ids = np.array(old_types, dtype=int)
         for i in range(len(old_nodes)):
             if i < old_graph["user_defined_nodes_number"]:
-                old_nodes_for_embedding[i] = num_labels + 1
+                node_name_ids[i] = num_labels + 1
 
-        initial_node_features = old_nodes_for_embedding
-        # initial_node_features = node_embedder(old_nodes_for_embedding).numpy()
         type_to_num_incoming_edges = np.zeros((num_edge_types, len(old_nodes)), dtype=int)
         
         old_node_to_new_node = dict()
@@ -139,20 +145,15 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                 # new_adjacency_lists[-1].append((start_node, end_node))
                 type_to_num_incoming_edges[edge_id][end_node] += 1
 
-        # new_adjacency_lists = np.array(new_adjacency_lists)
-        # print(new_adjacency_lists)
         nodes_mask = [i < old_graph["user_defined_nodes_number"] and node_id != num_labels for (i, node_id) in enumerate(old_nodes)]
         nodes_mask = np.array(nodes_mask, dtype=bool)
 
         labels = np.array(old_nodes, dtype=int)
-        # for (idx, label) in enumerate(labels):
-        #     if idx >= old_graph["user_defined_nodes_number"]:
-        #         labels[idx] = 0
-        # labels = np.zeros(len(old_nodes))
 
         return GraphSample(new_adjacency_lists, \
             type_to_num_incoming_edges, \
-            initial_node_features, \
+            node_name_ids, \
+            node_type_ids, \
             nodes_mask, \
             labels
             )
@@ -181,18 +182,12 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         
         properties = dict()
         properties["all_user_nodes"] = all_untensorised["name_to_id_mapping"]
-
-        # filter_unknown_nodes(graphs, 100)
-
         properties["user_defined_nodes_number"] = all_untensorised["total_user_defined_nodes"]
         properties["edge_mapping"] = all_untensorised["edge_name_to_id"]
-        # print(properties["all_user_nodes"])
-
         properties["__num_labels"] = len(properties["all_user_nodes"])
         properties["__num_edge_types"] = len(properties["edge_mapping"])
-        # embedder = properties["node_embedder"]
-        # print("EMBEDDING " + str(embedder(tf.constant([1,2,3])).numpy()))
-        # print(properties["__num_labels"], self.__initial_node_feature_size)
+        properties["__num_types"] = len(all_untensorised["type_to_id"])
+
         all_graphs = []
         for i in tqdm(range(len(graphs))):
             old_graph = graphs[i]
@@ -225,10 +220,15 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                 for e in range(self.__num_edge_types)]
         placeholders['type_to_num_incoming_edges'] = \
             tf.compat.v1.placeholder(dtype=tf.float32, shape=[self.__num_edge_types, None], name='type_to_num_incoming_edges')
+        placeholders['node_names'] = tf.compat.v1.placeholder(dtype=tf.int32, shape=[None], name='node_names')
+        placeholders['node_types'] = tf.compat.v1.placeholder(dtype=tf.int32, shape=[None], name='node_types')
         # placeholders['labels'] = tf.compat.v1.placeholder(tf.int32, [None], name='labels')
         # placeholders['nodes_mask'] = tf.compat.v1.placeholder(tf.float32, [None], name='nodes_mask')
-    
-        model_ops['initial_node_features'] = self.embedding_layer(placeholders['initial_node_features'])
+
+        node_features = self.name_embedding_layer(placeholders['node_names'])
+        type_features = self.type_embedding_layer(placeholders['node_types'])
+        model_ops['initial_node_features'] = tf.concat(values=[node_features, type_features], axis=1)
+        # self.embedding_layer(placeholders['initial_node_features'])
         model_ops['adjacency_lists'] = placeholders['adjacency_lists']
         model_ops['type_to_num_incoming_edges'] = placeholders['type_to_num_incoming_edges']
 
@@ -246,7 +246,9 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                                   activation=None,
                                   name="OutputDenseLayer",
                                   )(final_node_representations)  # Shape [V, Classes]
+
         print("Output label logits shape is " + str(np.shape(output_label_logits)))
+
         num_masked_preds = tf.reduce_sum(input_tensor=tf.cast(placeholders['nodes_mask'], tf.float32))
         losses = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=output_label_logits,
                                                                 labels=placeholders['labels'])
@@ -268,6 +270,7 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         old_nodes_length = np.shape(first_graph.node_features)[0]
 
         node_features = np.concatenate((first_graph.node_features, second_graph.node_features))
+        types = np.concatenate((first_graph.types, second_graph.types))
 
         type_to_num_incoming_edges = np.zeros(((self.__num_edge_types, old_nodes_length + len(second_graph.node_features))))
         type_to_num_incoming_edges[:,:old_nodes_length] = first_graph.type_to_num_incoming_edges
@@ -289,6 +292,7 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         return GraphSample(adjacency_lists, \
             type_to_num_incoming_edges, \
             node_features, \
+            types, \
             nodes_mask, \
             labels
             )
@@ -299,8 +303,8 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                                 model_placeholders: Dict[str, tf.Tensor],
                                 max_nodes_per_batch: int,
                                 ) -> Iterator[MinibatchData]:
-        # if data_fold in (DataFold.TRAIN, DataFold.VALIDATION):
-        #     np.random.shuffle(data)
+        if data_fold in (DataFold.TRAIN, DataFold.VALIDATION):
+            np.random.shuffle(data)
         
         combined_graphs = None
         end_val = int(len(data))
@@ -313,7 +317,8 @@ class Deobfuscate_Task(Sparse_Graph_Task):
             
             if (i + 1) % self.batch_graph_size == 0 or i == end_val - 1:
                 feed_dict = {
-                    model_placeholders['initial_node_features']: combined_graphs.node_features,
+                    model_placeholders['node_names']: combined_graphs.node_features,
+                    model_placeholders['node_types']: combined_graphs.types,
                     model_placeholders['type_to_num_incoming_edges']: combined_graphs.type_to_num_incoming_edges,
                     model_placeholders['num_graphs']: self.batch_graph_size if (i != end_val - 1) or (end_val % self.batch_graph_size == 0) \
                         else end_val % self.batch_graph_size,
