@@ -2,6 +2,10 @@ import pickle
 import sys
 import numpy as np
 
+def splitterz(text):
+    return (''.join(x + ('' if x == nxt else ', ') 
+            for x, nxt in zip(txt, txt[1:] + txt[-1])))
+
 def load_dependencies(file_name):
     return pickle.load(open(file_name, "rb"))
 
@@ -11,6 +15,7 @@ def get_user_names(types_deps):
         current_types = type_dep["types"]
         if current_types != None:
             for name in current_types.keys():
+                name = name.lower()
                 if name not in all_names:
                     all_names[name] = 0
                 all_names[name] = all_names[name] + 1
@@ -71,23 +76,23 @@ def get_adj_lists(new_edges, edge_name_to_index_mapping):
 #     gnn_data["edge_index_to_name_mapping"] = edge_index_to_name_mapping
 #     return gnn_data
 
-def filter_unknown_nodes(all_graphs, new_length):
-    id_to_usecases = dict()
-    for i in tqdm(range(len(graphs))):
-        cur_graph = graphs[i]
-        if (cur_graph["user_defined_nodes_number"] > 0):
-            nodes = cur_graph["nodes"]
-            for node in nodes:
-                if node not in id_to_usecases:
-                    id_to_usecases[node] = 0
-                id_to_usecases[node] += 1
-    sorted_ids = sorted(id_to_usecases.items(), key=lambda kv: -1 * kv[1])
-    most_k_used = dict()
-    for i in range(new_length - 1):
-        most_k_used[sorted_ids[i][0]] = i
-    return most_k_used
+# def filter_unknown_nodes(all_graphs, new_length):
+#     id_to_usecases = dict()
+#     for i in tqdm(range(len(graphs))):
+#         cur_graph = graphs[i]
+#         if (cur_graph["user_defined_nodes_number"] > 0):
+#             nodes = cur_graph["nodes"]
+#             for node in nodes:
+#                 if node not in id_to_usecases:
+#                     id_to_usecases[node] = 0
+#                 id_to_usecases[node] += 1
+#     sorted_ids = sorted(id_to_usecases.items(), key=lambda kv: -1 * kv[1])
+#     most_k_used = dict()
+#     for i in range(new_length - 1):
+#         most_k_used[sorted_ids[i][0]] = i
+#     return most_k_used
 
-def get_all_tokens_mapping(graphs, new_length = 5000):
+def get_all_tokens_mapping(graphs, new_length_user, new_length_other):
     from_name_to_id = dict()
     from_id_to_name = []
     from_id_to_usecases = dict()
@@ -106,31 +111,45 @@ def get_all_tokens_mapping(graphs, new_length = 5000):
     total_user_defined = len(from_id_to_name)
 
     for graph in graphs:
-        dependencies = graph["dependencies"]
+        dependencies = set(list(graph["dependencies"]))
         for (start, end, edge_type) in dependencies:
             if start not in from_name_to_id:
                 from_name_to_id[start] = len(from_id_to_name)
                 from_id_to_name.append(start)
+                if from_name_to_id[start] not in from_id_to_usecases:
+                    from_id_to_usecases[from_name_to_id[start]] = 0
+                from_id_to_usecases[from_name_to_id[start]] += 1
             if end not in from_name_to_id:
                 from_name_to_id[end] = len(from_id_to_name)
                 from_id_to_name.append(end)
+                if from_name_to_id[end] not in from_id_to_usecases:
+                    from_id_to_usecases[from_name_to_id[end]] = 0
+                from_id_to_usecases[from_name_to_id[end]] += 1
+    sorted_ids = sorted(from_id_to_usecases.items(), key=lambda kv: -1 * kv[1])
+    # sorted_ids = sorted(sorted_ids, key=lambda kv: -1 if kv[0] <= total_user_defined else 1)
 
-    sorted_ids = sorted(from_id_to_usecases.items(), key=lambda kv: -1 * kv[1])[:new_length]
-    sorted_ids = sorted(sorted_ids, key=lambda kv: -1 if kv[0] <= total_user_defined else 1)
-    print(sorted_ids)
     renewed_name_to_id = dict()
     renewed_id_to_name = []
 
     for i in range(len(sorted_ids)):
-        renewed_name_to_id[from_id_to_name[sorted_ids[i][0]]] = i
-        renewed_id_to_name.append(from_id_to_name[sorted_ids[i][0]])
+        if len(renewed_id_to_name) >= new_length_user:
+            break
+        current = sorted_ids[i]
+        if current[0] <= total_user_defined:
+            renewed_name_to_id[from_id_to_name[current[0]]] = len(renewed_id_to_name)
+            renewed_id_to_name.append(from_id_to_name[current[0]])
     
-    renewed_total_user_defined = 0
     for i in range(len(sorted_ids)):
-        if sorted_ids[i][0] <= total_user_defined:
-            renewed_total_user_defined += 1
+        if len(renewed_id_to_name) >= new_length_user + new_length_other:
+            break
+        current = sorted_ids[i]
+        if current[0] > total_user_defined:
+            renewed_name_to_id[from_id_to_name[current[0]]] = len(renewed_id_to_name)
+            renewed_id_to_name.append(from_id_to_name[current[0]])
+
+    print("Total user defined inside " + str(total_user_defined) + " " + str(len(from_id_to_name)) + " " + str(len(sorted_ids)))
     renewed_id_to_name.append("UNKNOWN")
-    return renewed_name_to_id, renewed_id_to_name, renewed_total_user_defined
+    return renewed_name_to_id, renewed_id_to_name, new_length_user
     # return from_name_to_id, from_id_to_name, total_user_defined    
 
 def create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping):
@@ -139,32 +158,38 @@ def create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping):
     for graph in graphs:
         total_nodes = []
         user_defined_nodes_number = 0
-        added_nodes_set = set()
+        added_nodes_mapping = dict()
         types = graph["types"]
         deps = graph["dependencies"]
         new_deps = []
         adj_lists = [[] for _ in edge_name_to_index_mapping.keys()]
 
         for t in types.keys():
-            if t not in added_nodes_set and t in name_to_id_mapping:
-                added_nodes_set.add(t)
+            t = t.lower()
+            if t not in added_nodes_mapping and t in name_to_id_mapping:
+                # added_nodes_set.add(t)
+                added_nodes_mapping[t] = len(total_nodes)
                 total_nodes.append(name_to_id_mapping.get(t, len(name_to_id_mapping)))
-        user_defined_nodes_number = len(added_nodes_set)
-
+        user_defined_nodes_number = len(added_nodes_mapping)
+        
+        deps = filter(lambda x: x[0] in name_to_id_mapping or x[1] in name_to_id_mapping, deps)
+        
         for (start, end, dep_type) in deps:
-            if start not in name_to_id_mapping and end not in name_to_id_mapping:
-                continue
-            if start not in added_nodes_set:
-                added_nodes_set.add(start)
+            start = start.lower()
+            end = end.lower()
+            if start not in added_nodes_mapping:
+                added_nodes_mapping[start] = len(total_nodes)
                 total_nodes.append(name_to_id_mapping.get(start, len(name_to_id_mapping)))
-            if end not in added_nodes_set:
-                added_nodes_set.add(end)
+            if end not in added_nodes_mapping:
+                added_nodes_mapping[end] = len(total_nodes)
                 total_nodes.append(name_to_id_mapping.get(end, len(name_to_id_mapping)))
-            if dep_type in edge_name_to_index_mapping:
-                current_edge = (name_to_id_mapping.get(start, len(name_to_id_mapping)), name_to_id_mapping.get(end, len(name_to_id_mapping)), \
-                    edge_name_to_index_mapping[dep_type])
+            if end != '_' and dep_type in edge_name_to_index_mapping:
+                # current_edge = (name_to_id_mapping.get(start, len(name_to_id_mapping)), name_to_id_mapping.get(end, len(name_to_id_mapping)), \
+                #     edge_name_to_index_mapping[dep_type])
+                current_edge = (added_nodes_mapping[start], added_nodes_mapping[end], edge_name_to_index_mapping[dep_type])
                 new_deps.append(current_edge)
-                adj_lists[edge_name_to_index_mapping[dep_type]].append((current_edge[0], current_edge[1]))
+                # NEED TO CHANGE THIS!
+                adj_lists[edge_name_to_index_mapping[dep_type]].append((added_nodes_mapping[start], added_nodes_mapping[end]))
 
         cur_graph = dict()
         cur_graph["nodes"] = total_nodes
@@ -176,7 +201,7 @@ def create_graph(graphs, name_to_id_mapping, edge_name_to_index_mapping):
     return new_graphs
 
 def get_n_edges_mapping(occurences, to_keep = 20):
-    first_to_keep = sorted(occurences.items(), key=lambda x : -1 * x[1])[1:to_keep+1]
+    first_to_keep = sorted(occurences.items(), key=lambda x : -1 * x[1])[:to_keep]
     new_name_to_id = dict()
     new_id_to_name = []
     current_index = 0
@@ -188,8 +213,9 @@ def get_n_edges_mapping(occurences, to_keep = 20):
 def create_multiple_graphs_data(graphs):
     all_user_variables_mapping, total_user_variables_used = get_user_names(graphs)
     _, _, occurences = get_edges_name_mapping(graphs)
-    edge_name_to_index_mapping, edge_index_to_name_mapping = get_n_edges_mapping(occurences, 25)
-    name_to_id_mapping, id_to_name_list, total_user_defined = get_all_tokens_mapping(graphs, 2500)
+    edge_name_to_index_mapping, edge_index_to_name_mapping = get_n_edges_mapping(occurences, 20)
+    name_to_id_mapping, id_to_name_list, total_user_defined = get_all_tokens_mapping(graphs, 1000, 7500)
+    print("Total number of user defined tokens is " + str(total_user_defined) + " total: " + str(len(id_to_name_list)))
     to_return = dict()
     to_return["name_to_id_mapping"] = name_to_id_mapping
     to_return["ids_to_names"] = id_to_name_list

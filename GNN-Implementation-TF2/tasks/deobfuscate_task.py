@@ -54,7 +54,7 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         # Things that will be filled once we load data:
         self.__num_edge_types = 0
         self.__initial_node_feature_size = self.params["initial_node_feature_size"]
-        self.batch_graph_size = 150
+        self.batch_graph_size = 250
 
         self.__num_labels = None
         self.all_user_nodes = None
@@ -102,9 +102,9 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         # self.num_edge_types = self.__num_edge_types
 
         size = len(all_loaded_graphs)
-        self._loaded_data[DataFold.TRAIN] = all_loaded_graphs[:int(size/2)]
-        self._loaded_data[DataFold.VALIDATION] = all_loaded_graphs[int(size/2):2*int(size/2)]
-        self.embedding_layer = tf.keras.layers.Embedding(input_dim=self.__num_labels + 2, output_dim=self.__initial_node_feature_size)
+        self._loaded_data[DataFold.TRAIN] = all_loaded_graphs[:int(1.5*size/2)]
+        self._loaded_data[DataFold.VALIDATION] = all_loaded_graphs[int(1.5*size/2):]
+        self.embedding_layer = tf.keras.layers.Embedding(input_dim=self.__num_labels + 1, output_dim=self.__initial_node_feature_size)
 
         # print(self._loaded_data[DataFold.TRAIN][0].node_features)
         print("Loaded all data! The number of diff nodes is " + str(self.__num_labels) + ", the number of diff edges is " + str(self.__num_edge_types) + \
@@ -134,10 +134,10 @@ class Deobfuscate_Task(Sparse_Graph_Task):
             new_adjacency_lists.append(np.zeros((len(edges), 2), dtype=int))
             # new_adjacency_lists.append([])
             for (idx, (start_node, end_node)) in enumerate(edges):
-                new_adjacency_lists[-1][idx][0] = old_node_to_new_node[start_node]
-                new_adjacency_lists[-1][idx][1] = old_node_to_new_node[end_node]
+                new_adjacency_lists[-1][idx][0] = start_node
+                new_adjacency_lists[-1][idx][1] = end_node
                 # new_adjacency_lists[-1].append((start_node, end_node))
-                type_to_num_incoming_edges[edge_id][old_node_to_new_node[end_node]] += 1
+                type_to_num_incoming_edges[edge_id][end_node] += 1
 
         # new_adjacency_lists = np.array(new_adjacency_lists)
         # print(new_adjacency_lists)
@@ -201,6 +201,7 @@ class Deobfuscate_Task(Sparse_Graph_Task):
 
         print_graph_number = 2500
         print([all_untensorised["ids_to_names"][x] for x in all_graphs[print_graph_number].labels], all_graphs[print_graph_number].nodes_mask)
+        print(all_graphs[print_graph_number])
         to_save = dict()
         to_save["all_graphs"] = all_graphs
         to_save["properties"] = properties
@@ -209,7 +210,6 @@ class Deobfuscate_Task(Sparse_Graph_Task):
         print("Saved modified data to %s-saved.pkl.gz" % data_name)
 
         return all_graphs, properties
-            
 
     def load_eval_data_from_path(self, path: RichPath) -> Iterable[Any]:
         raise NotImplementedError()
@@ -227,8 +227,6 @@ class Deobfuscate_Task(Sparse_Graph_Task):
             tf.compat.v1.placeholder(dtype=tf.float32, shape=[self.__num_edge_types, None], name='type_to_num_incoming_edges')
         # placeholders['labels'] = tf.compat.v1.placeholder(tf.int32, [None], name='labels')
         # placeholders['nodes_mask'] = tf.compat.v1.placeholder(tf.float32, [None], name='nodes_mask')
-
-        # properties["node_embedder"] = tf.keras.layers.Embedding(input_dim=properties["__num_labels"] + 1, output_dim=self.__initial_node_feature_size)
     
         model_ops['initial_node_features'] = self.embedding_layer(placeholders['initial_node_features'])
         model_ops['adjacency_lists'] = placeholders['adjacency_lists']
@@ -238,8 +236,6 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                                placeholders: Dict[str, tf.Tensor],
                                model_ops: Dict[str, tf.Tensor],
                                ) -> None:
-
-        print("\n In task OUTPUT model. \n")
         placeholders['labels'] = tf.compat.v1.placeholder(tf.int32, [None], name='labels')
         placeholders['nodes_mask'] = tf.compat.v1.placeholder(tf.float32, [None], name='nodes_mask')
 
@@ -250,6 +246,7 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                                   activation=None,
                                   name="OutputDenseLayer",
                                   )(final_node_representations)  # Shape [V, Classes]
+        print("Output label logits shape is " + str(np.shape(output_label_logits)))
         num_masked_preds = tf.reduce_sum(input_tensor=tf.cast(placeholders['nodes_mask'], tf.float32))
         losses = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=output_label_logits,
                                                                 labels=placeholders['labels'])
@@ -272,7 +269,7 @@ class Deobfuscate_Task(Sparse_Graph_Task):
 
         node_features = np.concatenate((first_graph.node_features, second_graph.node_features))
 
-        type_to_num_incoming_edges = np.zeros((np.shape(first_graph.type_to_num_incoming_edges)[0], old_nodes_length + len(second_graph.node_features)))
+        type_to_num_incoming_edges = np.zeros(((self.__num_edge_types, old_nodes_length + len(second_graph.node_features))))
         type_to_num_incoming_edges[:,:old_nodes_length] = first_graph.type_to_num_incoming_edges
         type_to_num_incoming_edges[:,old_nodes_length:] = second_graph.type_to_num_incoming_edges
 
@@ -302,8 +299,8 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                                 model_placeholders: Dict[str, tf.Tensor],
                                 max_nodes_per_batch: int,
                                 ) -> Iterator[MinibatchData]:
-        if data_fold in (DataFold.TRAIN, DataFold.VALIDATION):
-            np.random.shuffle(data)
+        # if data_fold in (DataFold.TRAIN, DataFold.VALIDATION):
+        #     np.random.shuffle(data)
         
         combined_graphs = None
         end_val = int(len(data))
@@ -339,7 +336,7 @@ class Deobfuscate_Task(Sparse_Graph_Task):
                               task_metric_results: List[Dict[str, np.ndarray]],
                               num_graphs: int,
                               ) -> float:
-        return np.sum([m['total_loss'] for m in task_metric_results]) / num_graphs
+        return np.sum([m['loss'] for m in task_metric_results])
 
     def pretty_print_epoch_task_metrics(self, task_metric_results: List[Dict[str, np.ndarray]], num_graphs: int) -> str:
         return "Acc: %.2f%%" % (np.sum([m['accuracy'] for m in task_metric_results]) / len(task_metric_results)*100,)
